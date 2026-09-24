@@ -15,3 +15,15 @@ dist/
 build/
 client_secret*.json
 service_account*.json
+
+# --- claude-workflow scaffold (added by install.sh) ---
+/WORKFLOW.md
+/CLAUDE.md
+/AGENTS.md
+/memory-bank/
+/.claude/skills/document/
+/.claude/skills/init-project/
+/.claude/skills/lesson/
+/.agents/skills/document/
+/.agents/skills/init-project/
+/.agents/skills/lesson/
