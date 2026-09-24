@@ -31,8 +31,8 @@
    | `EUPRY_DOMAIN` | `eupry.com` |
    | `COMPETITORS_SHEET_ID` | `10EtUFYPH5TyOdeQZW7P7IYYcHgoOadYxlJXfvMonxOM` |
    | `GOOGLE_SERVICE_ACCOUNT_JSON` | Paste the full JSON of the service account credentials (see below) |
-   | `OPENROUTER_API_KEY` | https://openrouter.ai/keys — for clustering + exec summary |
-   | `OPENROUTER_MODEL` | Default `anthropic/claude-sonnet-4.6`. Alt: `anthropic/claude-haiku-4.5` (cheaper, no caching benefit at our payload size) |
+   | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys — for the relevance filter, clustering, exec summary and strategy analyses |
+   | `ANTHROPIC_MODEL` | Optional. Default `claude-sonnet-5` |
 
 4. **Redeploy:** `railway up`
 

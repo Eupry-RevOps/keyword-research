@@ -1,4 +1,4 @@
-"""Three post-clustering AI analyses that run in parallel against OpenRouter:
+"""Three post-clustering AI analyses that run in parallel against the Anthropic API:
 
   1. Page-type consensus (#3) — for each cluster, looks at the SERP top-10 we
      already fetched and identifies which page format Google rewards.
@@ -22,9 +22,10 @@ import re
 from dataclasses import dataclass, field
 
 import httpx
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 
 from app.config import get_settings
+from app.services.ai_analysis import response_text
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,6 @@ MAX_COMPETITOR_PAGES_PER_CLUSTER = 3
 MAX_PAGE_BYTES = 600_000  # ~150KB of text after strip; ignore mega-pages
 PAGE_FETCH_TIMEOUT = 15.0
 PAGE_TEXT_CAP_CHARS = 8000  # what we send to the LLM per page
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 @dataclass
@@ -52,17 +52,14 @@ async def analyze_strategy(
 ) -> StrategyAnalysis:
     """Run the three post-cluster analyses. Each is best-effort."""
     settings = get_settings()
-    if not settings.openrouter_api_key or not clusters:
+    if not settings.anthropic_api_key or not clusters:
         return StrategyAnalysis(enabled=False)
 
-    client = AsyncOpenAI(
-        api_key=settings.openrouter_api_key,
-        base_url=OPENROUTER_BASE_URL,
-    )
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    page_type_task = _analyze_page_types(client, settings.openrouter_model, clusters, serps)
-    personas_task = _derive_personas(client, settings.openrouter_model, clusters, serps, seeds, market)
-    citation_task = _grade_competitor_citations(client, settings.openrouter_model, clusters, serps)
+    page_type_task = _analyze_page_types(client, settings.anthropic_model, clusters, serps)
+    personas_task = _derive_personas(client, settings.anthropic_model, clusters, serps, seeds, market)
+    citation_task = _grade_competitor_citations(client, settings.anthropic_model, clusters, serps)
 
     page_types, personas_out, citation_grades = await asyncio.gather(
         page_type_task, personas_task, citation_task, return_exceptions=True
@@ -122,7 +119,7 @@ Output JSON:
 
 
 async def _analyze_page_types(
-    client: AsyncOpenAI,
+    client: AsyncAnthropic,
     model: str,
     clusters: list[dict],
     serps: dict[str, list[dict]],
@@ -139,15 +136,13 @@ async def _analyze_page_types(
             "serp_top10": rep_serp,
         })
 
-    resp = await client.chat.completions.create(
+    resp = await client.messages.create(
         model=model,
-        max_tokens=3000,
-        temperature=0.2,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "page_type_analysis",
-                "strict": True,
+        max_tokens=16000,
+        system=PAGE_TYPE_SYSTEM,
+        output_config={
+            "format": {
+                "type": "json_schema",
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -172,14 +167,13 @@ async def _analyze_page_types(
             },
         },
         messages=[
-            {"role": "system", "content": PAGE_TYPE_SYSTEM},
             {"role": "user", "content": [
                 {"type": "text", "text": f"<clusters_and_serps>\n{json.dumps(payload, ensure_ascii=False)}\n</clusters_and_serps>"},
                 {"type": "text", "text": PAGE_TYPE_INSTRUCTION},
             ]},
         ],
     )
-    data = _safe_json_parse(resp.choices[0].message.content or "")
+    data = _safe_json_parse(response_text(resp))
     out: dict[str, dict] = {}
     for item in (data or {}).get("clusters", []):
         out[item["name"]] = {
@@ -225,7 +219,7 @@ Score = sum of 4 dimensions, 0-100. Show only personas with score >= 40 per clus
 
 
 async def _derive_personas(
-    client: AsyncOpenAI,
+    client: AsyncAnthropic,
     model: str,
     clusters: list[dict],
     serps: dict[str, list[dict]],
@@ -247,19 +241,18 @@ async def _derive_personas(
         ],
     }
 
-    resp = await client.chat.completions.create(
+    resp = await client.messages.create(
         model=model,
-        max_tokens=4000,
-        temperature=0.4,
+        max_tokens=16000,
+        system=PERSONAS_SYSTEM,
         messages=[
-            {"role": "system", "content": PERSONAS_SYSTEM},
             {"role": "user", "content": [
                 {"type": "text", "text": f"<payload>\n{json.dumps(payload, ensure_ascii=False)}\n</payload>"},
                 {"type": "text", "text": PERSONAS_INSTRUCTION},
             ]},
         ],
     )
-    return _safe_json_parse(resp.choices[0].message.content or "") or {"personas": [], "cluster_fit": {}}
+    return _safe_json_parse(response_text(resp)) or {"personas": [], "cluster_fit": {}}
 
 
 # ================================================== #1 competitor citation grading
@@ -274,7 +267,7 @@ PAGE_FETCH_UA = (
 
 
 async def _grade_competitor_citations(
-    client: AsyncOpenAI,
+    client: AsyncAnthropic,
     model: str,
     clusters: list[dict],
     serps: dict[str, list[dict]],
@@ -380,7 +373,7 @@ Output JSON:
 
 
 async def _grade_one_page(
-    client: AsyncOpenAI,
+    client: AsyncAnthropic,
     model: str,
     cluster_name: str,
     url: str,
@@ -393,15 +386,15 @@ async def _grade_one_page(
         f"<page_text>\n{text_capped}\n</page_text>"
     )
     try:
-        resp = await client.chat.completions.create(
+        # Rubric scoring on one page: low effort keeps thinking short and cheap.
+        resp = await client.messages.create(
             model=model,
-            max_tokens=800,
-            temperature=0.2,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "citation_grade",
-                    "strict": True,
+            max_tokens=8000,
+            system=GRADE_SYSTEM,
+            output_config={
+                "effort": "low",
+                "format": {
+                    "type": "json_schema",
                     "schema": {
                         "type": "object",
                         "additionalProperties": False,
@@ -426,11 +419,10 @@ async def _grade_one_page(
                 },
             },
             messages=[
-                {"role": "system", "content": GRADE_SYSTEM},
                 {"role": "user", "content": user_block + "\n\n" + GRADE_INSTRUCTION},
             ],
         )
-        return _safe_json_parse(resp.choices[0].message.content or "")
+        return _safe_json_parse(response_text(resp))
     except Exception as exc:
         log.warning("Grade failed for %s: %s", url, exc)
         return None

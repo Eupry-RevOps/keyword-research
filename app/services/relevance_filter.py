@@ -1,4 +1,4 @@
-"""Filter keyword expansions for industry relevance via OpenRouter.
+"""Filter keyword expansions for industry relevance via the Anthropic API.
 
 DataForSEO's keyword_ideas is purely lexical — searching "temperature mapping"
 returns "chicken temperature", "phoenix temperature", "definition of temperature",
@@ -14,13 +14,13 @@ import asyncio
 import json
 import logging
 
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 
 from app.config import get_settings
+from app.services.ai_analysis import response_text
 
 log = logging.getLogger(__name__)
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 BATCH_SIZE = 150
 # Seeds are always kept regardless of model judgement.
 
@@ -58,7 +58,7 @@ async def filter_keywords(
     On any failure, returns the input list unchanged.
     """
     settings = get_settings()
-    if not settings.openrouter_api_key or not keywords:
+    if not settings.anthropic_api_key or not keywords:
         return keywords
 
     seed_set = {s.lower() for s in seeds}
@@ -69,10 +69,7 @@ async def filter_keywords(
     if not to_check:
         return keywords
 
-    client = AsyncOpenAI(
-        api_key=settings.openrouter_api_key,
-        base_url=OPENROUTER_BASE_URL,
-    )
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     # Batch to keep prompts manageable
     batches = [to_check[i:i + BATCH_SIZE] for i in range(0, len(to_check), BATCH_SIZE)]
@@ -83,7 +80,7 @@ async def filter_keywords(
 
     try:
         verdict_lists = await asyncio.gather(*[
-            _grade_batch(client, settings.openrouter_model, topic, seeds, market, batch)
+            _grade_batch(client, settings.anthropic_model, topic, seeds, market, batch)
             for batch in batches
         ])
     except Exception as exc:
@@ -113,7 +110,7 @@ async def filter_keywords(
 
 
 async def _grade_batch(
-    client: AsyncOpenAI,
+    client: AsyncAnthropic,
     model: str,
     topic: str,
     seeds: list[str],
@@ -127,15 +124,15 @@ async def _grade_batch(
         "candidates": [kw["keyword"] for kw in batch],
     }
 
-    resp = await client.chat.completions.create(
+    # Simple classification: low effort keeps thinking short and cheap.
+    resp = await client.messages.create(
         model=model,
-        max_tokens=8000,
-        temperature=0.1,
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "relevance_verdicts",
-                "strict": True,
+        max_tokens=16000,
+        system=FILTER_SYSTEM,
+        output_config={
+            "effort": "low",
+            "format": {
+                "type": "json_schema",
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -158,14 +155,13 @@ async def _grade_batch(
             },
         },
         messages=[
-            {"role": "system", "content": FILTER_SYSTEM},
             {"role": "user", "content": [
                 {"type": "text", "text": f"<context>\n{json.dumps(payload, ensure_ascii=False)}\n</context>"},
                 {"type": "text", "text": FILTER_INSTRUCTION},
             ]},
         ],
     )
-    raw = resp.choices[0].message.content or ""
+    raw = response_text(resp)
     try:
         data = json.loads(raw)
         return data.get("verdicts", [])

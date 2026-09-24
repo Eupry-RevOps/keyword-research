@@ -23,10 +23,8 @@ class Settings(BaseSettings):
     competitors_sheet_id: str = ""
     google_service_account_json: str = ""
 
-    openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-sonnet-4.6"
-    openrouter_app_url: str = ""
-    openrouter_app_title: str = "Eupry Keyword Portal"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
 
     db_path: str = "data/portal.db"
     dossier_dir: str = "data/dossiers"
