@@ -82,3 +82,7 @@ data/                  # SQLite db + generated dossiers (gitignored)
 ## Status
 
 v0.1 — in development. See `plans/marketing-keyword-portal.md` in the `claude-seo` repo for the full spec.
+
+## Agent workflow
+
+After cloning or pulling, start with [AGENTS.md](AGENTS.md) (or [CLAUDE.md](CLAUDE.md)), then [WORKFLOW.md](WORKFLOW.md) and the [memory bank](memory-bank/toc.md). Every change must include an active-context update and a dated final task document; the GitHub check verifies this on pull requests and main pushes. New files must be justified and listed in that document.
